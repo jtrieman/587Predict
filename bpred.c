@@ -189,7 +189,10 @@ bpred_dir_create (
   unsigned int l1size,	 	/* level-1 table size */
   unsigned int l2size,	 	/* level-2 table size (if relevant) */
   unsigned int shift_width,	/* history register width */
-  unsigned int xor)	    	/* history xor address flag */
+  unsigned int xor,	   		/* history xor address flag */
+  unsigned int tage_M, 			/* tage number of tables (including base) */
+  unsigned int tage_tag_width,	/* tage tag width */
+  unsigned int tage_predictor_rows) /* tage predictor rows (sets index width) */
 {
   struct bpred_dir_t *pred_dir;
   unsigned int cnt;
@@ -265,6 +268,18 @@ bpred_dir_create (
 	//[###TAGE###] Apply parameters passed in.
   case BPredTAGE:
 	// Apply passed parameters.
+	pred_dir->config.tage.M = tage_M;
+	pred_dir->config.tage.alpha = 2; // Hardcode for the moment (matches paper)
+	pred_dir->config.tage.L1 = 2; // Hardcode for the moment (matches paper)
+	pred_dir->config.tage.tag_bits = tage_tag_width; // Number of bits in tag
+	// Create predictor tables (remember to deallocate!!)
+	// Right order?
+	pred_dir->config.tage.T = calloc(tage_rows, sizeof *(pred_dir->config.tage.T));
+	for (i=0; i<tage_rows; i++){
+		pred_dir->config.tage.T[i] = calloc(tage_M, sizeof *(pred_dir->config.tage.T[i]));
+	}
+    if (!pred_dir->config.tage.T)
+	fatal("cannot allocate tage tables");
 	break;
 
   default:
@@ -564,6 +579,50 @@ bpred_dir_lookup(struct bpred_dir_t *pred_dir,	/* branch dir predictor inst */
 	  
 	case BPredTAGE:
 		//[###TAGE###] predict branch
+		//get bimodal (base) prediction (hash algorithm?)
+		char base = pred_dir->config.bimod.table[BIMOD_HASH(pred_dir, baddr)];
+		
+		//get primary and alt predictions
+		char pred, altpred;
+		uint16_t primary_bank = 0, alt_bank = 0;
+		uint16_t tag, index;
+		_Bool match_found = 0;
+		for (int bank = 1; bank < M; bank++)
+		{
+			hash(ghist, history_length[bank], phist, csr2_bits, csr2_bits, &tag, &index);
+			if (pred_dir->config.tage.T[bank-1][index].tag == tag) // bank - 1 due to bank 0 being base predictor
+			{
+				// Longest history is primary if there is more than one match
+				if (match_found)
+				{
+					altpred = pred;
+					alt_bank = primary_bank;
+					primary_bank = bank;
+				}
+				else
+				{
+					primary_bank = bank;
+					match_found = 1;
+				}
+				pred = pred_dir->config.tage.T[bank-1][index].ctr >= 0
+			}
+		}
+		// If there was no match use base predictor
+		if (primary_bank == 0)
+		{
+			return base;
+		}
+		else
+		{
+			// check if new:
+			if ((pred_dir->config.tage.T[primary_bank-1][primary_index].u == 0) && 
+				((pred_dir->config.tage.T[primary_bank-1][primary_index].ctr == 0) ||
+				(pred_dir->config.tage.T[primary_bank-1][primary_index].ctr == -1)) &&
+				(global_behavior < GLOBAL_MAX / 2))
+				return altpred;
+			else
+				return pred;
+		}
 	break;
 	
     default:
@@ -660,7 +719,13 @@ bpred_lookup(struct bpred_t *pred,	/* branch predictor instance */
 	
 	//[###TAGE###] 
 	case BPredTAGE:
-	// Just call bpred_dir_lookup for more complex?
+		// Only predict for conditional branches
+		if ((MD_OP_FLAGS(op) & (F_CTRL|F_UNCOND)) != (F_CTRL|F_UNCOND))
+		{
+			// Primary
+			dir_update_ptr->pdir1 =
+				bpred_dir_lookup (pred->dirpred.tage, baddr);
+	// Just call bpred_dir_lookup or more complex?
 	break;
 	
 	

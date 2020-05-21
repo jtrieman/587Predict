@@ -116,6 +116,14 @@ struct bpred_btb_ent_t {
   struct bpred_btb_ent_t *prev, *next; /* lru chaining pointers */
 };
 
+/* tage predictor table entry */
+typedef struct 
+{
+	char ctr; // signed 3 bit
+	uint8_t u; // unsigned 2 bit counter
+	uint16_t tag; // variable width tag (9 or 11 bit in paper
+} tage_entry_t; 
+
 /* direction predictor def */
 struct bpred_dir_t {
   enum bpred_class class;	/* type of predictor */
@@ -134,6 +142,12 @@ struct bpred_dir_t {
     } two;
 	struct { //[###TAGE###]
 		// ltage parameters
+		int M; // Number of compnents (including base bimodal predictor.
+		int alpha; // Geometric series parameters (ratio between component history lengths
+		int L1; // Geometric series parameter (T[1] history length)
+		int tag_bits; // Number of bits in tag
+		// Size parameters for T0 and T[1] to T[M-1]?
+		tage_entry_t **T;
 	} tage; //[###TAGE###]
   } config;
 };
@@ -178,7 +192,7 @@ struct bpred_t {
   counter_t ras_hits;		/* num correct return-address predictions */
 };
 
-// [###TAGE###] Figure this out. The : operator defines bit fields (dir 4 single bits.
+// [###TAGE###] Figure this out. The : operator defines bit fields (dir 4 single bits).
 /* branch predictor update information */
 struct bpred_update_t {
   char *pdir1;		/* direction-1 predictor counter */
@@ -192,7 +206,7 @@ struct bpred_update_t {
   } dir;
 };
 
-// [###TAGE###] add parameters for take predictor
+// [###TAGE###] add parameters for tage predictor
 /* create a branch predictor */
 struct bpred_t *			/* branch predictory instance */
 bpred_create(enum bpred_class class,	/* type of predictor to create */
@@ -213,7 +227,10 @@ bpred_dir_create (
   unsigned int l1size,		/* level-1 table size */
   unsigned int l2size,		/* level-2 table size (if relevant) */
   unsigned int shift_width,	/* history register width */
-  unsigned int xor);	   	/* history xor address flag */
+  unsigned int xor,	   		/* history xor address flag */
+  unsigned int tage_M, 			/* tage number of tables (including base) */
+  unsigned int tage_tag_width,	/* tage tag width */
+  unsigned int tage_predictor_rows); /* tage predictor rows (sets index width) */
 
 /* print branch predictor configuration */
 void
