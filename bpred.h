@@ -120,8 +120,8 @@ struct bpred_btb_ent_t {
 typedef struct 
 {
 	char ctr; // signed 3 bit
-	uint8_t u; // unsigned 2 bit counter
-	uint16_t tag; // variable width tag (9 or 11 bit in paper
+	unsigned char u; // unsigned 2 bit counter
+	unsigned int tag; // variable width tag (9 or 11 bit in paper)
 } tage_entry_t; 
 
 /* direction predictor def */
@@ -198,11 +198,17 @@ struct bpred_update_t {
   char *pdir1;		/* direction-1 predictor counter */
   char *pdir2;		/* direction-2 predictor counter */
   char *pmeta;		/* meta predictor counter */
+  char *tage_base;
+  tage_entry_t *tage_pred;
+  tage_entry_t *tage_altpred;
+  unsigned int tage_index;
+  unsigned char tage_bank;
   struct {		/* predicted directions */
     unsigned int ras    : 1;	/* RAS used */
     unsigned int bimod  : 1;    /* bimodal predictor */
     unsigned int twolev : 1;    /* 2-level predictor */
     unsigned int meta   : 1;    /* meta predictor (0..bimod / 1..2lev) */
+	unsigned int tage   : 1;
   } dir;
 };
 
