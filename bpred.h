@@ -55,6 +55,7 @@
 #define dassert(a) assert(a)
 
 #include <stdio.h>
+#include <inttypes.h>
 
 #include "host.h"
 #include "misc.h"
@@ -146,8 +147,15 @@ struct bpred_dir_t {
 		int alpha; // Geometric series parameters (ratio between component history lengths
 		int L1; // Geometric series parameter (T[1] history length)
 		int tag_bits; // Number of bits in tag
-		// Size parameters for T0 and T[1] to T[M-1]?
+		int base_entries; // entries in base predictor
+		int T_entries; // entries in tagged predictors
+		int *history_length;
 		tage_entry_t **T;
+		unsigned int *index;
+		unsigned int *tag;
+		uint16_t phist;
+		uint32_t ghist[16]; // Init to 0!
+		unsigned int global_behavior; // 4 bit counter (use newly allocated predictor)
 	} tage; //[###TAGE###]
   } config;
 };
@@ -301,6 +309,17 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
 	     int correct,		/* was earlier prediction correct? */
 	     enum md_opcode op,		/* opcode of instruction */
 	     struct bpred_update_t *dir_update_ptr); /* pred state pointer */
+
+// Update tags and indicies for all banks for a given branch address.
+void update_tags_and_indicies(struct bpred_t *pred, unsigned int pc);
+
+// Apply hash function to calculate tag and index
+void hash(struct bpred_t *pred, int bank, unsigned int pc, unsigned int *tag, unsigned int *index);
+
+// Update global history (shift left and add new bit)
+void update_ghist(_Bool new_bit, uint32_t *ghist);
+// Get a bit range from ghist (must be less than 32 bits, range is start_bit to stop_bit inclusive)
+uint32_t ghist_bits(int start_bit, int stop_bit, uint32_t ghist[]);
 
 
 #ifdef foo0
