@@ -284,6 +284,15 @@ bpred_dir_create (
 	fatal("cannot allocate tage tables");
 	pred_dir->config.tage.tag = calloc(tage_M-1, sizeof(unsigned int));
 	pred_dir->config.tage.index = calloc(tage_M-1, sizeof(unsigned int));
+	pred_dir->config.tage.history_length = calloc(tage_M-1, sizeof(int));
+	// initialize the geometric series history lengths
+	for (int i = 0; i < tage_M-1; i++)
+		pred_dir->config.tage.history_length[i] = (int)(pow(pred_dir->config.tage.alpha, i)*pred_dir->config.tage.L1 + 0.5);
+	// Initialize ghist to all 0
+	for (int i = 0; i < 16; i++)
+		pred_dir->config.tage.ghist[i] = 0;
+	pred_dir->config.tage.phist = 0; // init path history (1 bit per branch)
+	pred_dir->config.tage.global_behavior = 8; // initialize to (weakly) use newly allocated predictor
 	break;
 
   default:
@@ -1146,6 +1155,10 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
 	  //		choose lower with higher probability
 	  // update ghist
 	  update_ghist(taken, &pred->dirpred.tage->config.tage.ghist[0]);
+	  // update phist (least significant bit. Unclear which bit paper used.)
+	  pred->dirpred.tage->config.tage.phist <<= 1;
+	  pred->dirpred.tage->config.tage.phist |= baddr & 1;
+	  
   }
   else
   {
