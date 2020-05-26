@@ -258,7 +258,20 @@ sim_check_options(struct opt_odb_t *odb, int argc, char **argv)
     }
   else if (!mystricmp(pred_type, "tage"))
   {
-    pred = bpred_create(BPredTAGE, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    /* TODO: Revise this with more parameters as we implement TAGE. Right now,
+     * only btb sets, btb associativity, and ret stack size are used in
+     * the tage case of bpred_create()
+     */
+    pred = bpred_create(BPredTAGE,
+			  /* bimod table size */bimod_config[0],
+			  /* 2lev l1 size */0,
+			  /* 2lev l2 size */0,
+			  /* meta table size */0,
+			  /* history reg size */0,
+			  /* history xor address */0,
+			  /* btb sets */btb_config[0],
+			  /* btb assoc */btb_config[1],
+			  /* ret-addr stack size */ras_size);
     printf("Setting up tage...");
   }
   else
@@ -473,6 +486,7 @@ sim_main(void)
       /* get the next instruction to execute */
       MD_FETCH_INST(inst, mem, regs.regs_PC);
 
+      fprintf(stderr, "this far\n");
       /* keep an instruction count */
       sim_num_insn++;
 

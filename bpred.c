@@ -115,9 +115,9 @@ bpred_create(enum bpred_class class,	/* type of predictor to create */
     break;
 	
   case BPredTAGE: //[###TAGE###]
-	// Replace last 3 0s with tage parameters
-	pred->dirpred.tage = bpred_dir_create(class, bimod_size, 0, 0, 0, 1, 0, 0);
-	break;
+    // Replace last 3 0s with tage parameters
+    pred->dirpred.tage = bpred_dir_create(class, bimod_size, 0, 0, 0, 1, 0, 0);
+    break;
 
   default:
     panic("bogus predictor class");
@@ -129,47 +129,60 @@ bpred_create(enum bpred_class class,	/* type of predictor to create */
   case BPred2Level:
   case BPred2bit:
   case BPredTAGE: //[###TAGE###] TAGE using BTB and return address stack?
+    /* allocate BTB */
+    if (!btb_sets || (btb_sets & (btb_sets-1)) != 0)
+      fatal("number of BTB sets must be non-zero and a power of two");
+    
+    if (!btb_assoc || (btb_assoc & (btb_assoc-1)) != 0)
+      fatal("BTB associativity must be non-zero and a power of two");
+
+    if (!(pred->btb.btb_data = calloc(btb_sets * btb_assoc,
+        sizeof(struct bpred_btb_ent_t))))
     {
-      int i;
-
-      /* allocate BTB */
-      if (!btb_sets || (btb_sets & (btb_sets-1)) != 0)
-	fatal("number of BTB sets must be non-zero and a power of two");
-      if (!btb_assoc || (btb_assoc & (btb_assoc-1)) != 0)
-	fatal("BTB associativity must be non-zero and a power of two");
-
-      if (!(pred->btb.btb_data = calloc(btb_sets * btb_assoc,
-					sizeof(struct bpred_btb_ent_t))))
-	fatal("cannot allocate BTB");
-
-      pred->btb.sets = btb_sets;
-      pred->btb.assoc = btb_assoc;
-
-      if (pred->btb.assoc > 1)
-	for (i=0; i < (pred->btb.assoc*pred->btb.sets); i++)
-	  {
-	    if (i % pred->btb.assoc != pred->btb.assoc - 1)
-	      pred->btb.btb_data[i].next = &pred->btb.btb_data[i+1];
-	    else
-	      pred->btb.btb_data[i].next = NULL;
-	    
-	    if (i % pred->btb.assoc != pred->btb.assoc - 1)
-	      pred->btb.btb_data[i+1].prev = &pred->btb.btb_data[i];
-	  }
-
-      /* allocate retstack */
-      if ((retstack_size & (retstack_size-1)) != 0)
-	fatal("Return-address-stack size must be zero or a power of two");
-      
-      pred->retstack.size = retstack_size;
-      if (retstack_size)
-	if (!(pred->retstack.stack = calloc(retstack_size, 
-					    sizeof(struct bpred_btb_ent_t))))
-	  fatal("cannot allocate return-address-stack");
-      pred->retstack.tos = retstack_size - 1;
-      
-      break;
+      fatal("cannot allocate BTB");
     }
+
+    pred->btb.sets = btb_sets;
+    pred->btb.assoc = btb_assoc;
+
+    if (pred->btb.assoc > 1)
+    {
+      for (int i = 0; i < (pred->btb.assoc*pred->btb.sets); i++)
+      {
+        if (i % pred->btb.assoc != pred->btb.assoc - 1)
+        {
+          pred->btb.btb_data[i].next = &pred->btb.btb_data[i + 1];
+        }
+        else
+        {
+          pred->btb.btb_data[i].next = NULL;
+        }
+        
+        if (i % pred->btb.assoc != pred->btb.assoc - 1)
+        {
+          pred->btb.btb_data[i + 1].prev = &pred->btb.btb_data[i];
+        }
+      }
+    }
+
+    /* allocate retstack */
+    if ((retstack_size & (retstack_size-1)) != 0)
+    {
+      fatal("Return-address-stack size must be zero or a power of two");
+    }
+    
+    pred->retstack.size = retstack_size;
+    if (retstack_size)
+    {
+      if (!(pred->retstack.stack = calloc(retstack_size, 
+              sizeof(struct bpred_btb_ent_t))))
+      {
+        fatal("cannot allocate return-address-stack");
+      }
+    }
+    pred->retstack.tos = retstack_size - 1;
+      
+    break;
 
   case BPredTaken:
   case BPredNotTaken:
@@ -422,8 +435,9 @@ bpred_reg_stats(struct bpred_t *pred,	/* branch predictor instance */
     case BPredNotTaken:
       name = "bpred_nottaken";
       break;
-	case BPredTAGE: //[###TAGE###]
-	  name = "bpred_tage";
+    case BPredTAGE: //[###TAGE###]
+      name = "bpred_tage";
+      break;
     default:
       panic("bogus branch predictor class");
     }
