@@ -116,7 +116,7 @@ bpred_create(enum bpred_class class,	/* type of predictor to create */
 	
   case BPredTAGE: //[###TAGE###]
 	// Replace last 3 0s with tage parameters
-	pred->dirpred.tage = bpred_dir_create(class, bimod_size, 0, 0, 0, 0, 0, 0);
+	pred->dirpred.tage = bpred_dir_create(class, bimod_size, 0, 0, 0, 1, 0, 0);
 	break;
 
   default:
@@ -378,7 +378,7 @@ bpred_config(struct bpred_t *pred,	/* branch predictor instance */
 	
   //[###TAGE###]
   case BPredTAGE:
-	bpred_dir_config (pred->dirpred.tage, "ltage", stream);
+	bpred_dir_config (pred->dirpred.tage, "tage", stream);
 	break;
 
   default:
