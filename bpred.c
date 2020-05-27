@@ -296,9 +296,9 @@ bpred_dir_create (
 	pred_dir->config.tage.T_idx_bits = tage_idx_width;
 	// Create predictor tables (remember to deallocate!!)
 	// Right order? T[bank][row]
-	pred_dir->config.tage.T = calloc(tage_M-1, sizeof *(pred_dir->config.tage.T));
+	pred_dir->config.tage.T = calloc(tage_M-1, sizeof (tage_entry_t *));
 	for (int i=0; i<tage_M-1; i++){
-		pred_dir->config.tage.T[i] = calloc((1 << tage_idx_width), sizeof *(pred_dir->config.tage.T[i]));
+		pred_dir->config.tage.T[i] = calloc((1 << tage_idx_width), sizeof (tage_entry_t));
 	}
     if (!pred_dir->config.tage.T)
 	fatal("cannot allocate tage tables");
