@@ -603,6 +603,9 @@ bpred_dir_lookup(struct bpred_dir_t *pred_dir,	/* branch dir predictor inst */
     case BPredTaken:
     case BPredNotTaken:
       break;
+    case BPredTAGE:
+      /* TODO */
+      break;
     default:
       panic("bogus branch direction predictor class");
     }
@@ -700,7 +703,7 @@ bpred_lookup(struct bpred_t *pred,	/* branch predictor instance */
 		// Only predict for conditional branches
 		if ((MD_OP_FLAGS(op) & (F_CTRL|F_UNCOND)) != (F_CTRL|F_UNCOND))
 		{
-			dir_update_ptr->tage_base = bpred_dir_lookup (pred->dirpred.bimod, baddr);
+			dir_update_ptr->tage_base = bpred_dir_lookup (pred->dirpred.tage, baddr);
 
 			//[###TAGE###] predict branch
 			//get primary and alt predictions
