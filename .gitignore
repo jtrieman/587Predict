@@ -44,6 +44,14 @@
 *.i*86
 *.x86_64
 *.hex
+sim-bpred
+sim-cache
+sim-eio
+sim-fast
+sim-outorder
+sim-profile
+sim-safe
+sysprobe
 
 # Debug files
 *.dSYM/
@@ -59,3 +67,6 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# Temporary files
+*.sw*

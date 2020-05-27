@@ -115,9 +115,9 @@ bpred_create(enum bpred_class class,	/* type of predictor to create */
     break;
 	
   case BPredTAGE: //[###TAGE###]
-	// Replace last 3 0s with tage parameters
-	pred->dirpred.tage = bpred_dir_create(class, bimod_size, 0, 0, 0, 0, 0, 0);
-	break;
+    // Replace last 3 0s with tage parameters
+    pred->dirpred.tage = bpred_dir_create(class, bimod_size, 0, 0, 0, 1, 0, 0);
+    break;
 
   default:
     panic("bogus predictor class");
@@ -129,47 +129,60 @@ bpred_create(enum bpred_class class,	/* type of predictor to create */
   case BPred2Level:
   case BPred2bit:
   case BPredTAGE: //[###TAGE###] TAGE using BTB and return address stack?
+    /* allocate BTB */
+    if (!btb_sets || (btb_sets & (btb_sets-1)) != 0)
+      fatal("number of BTB sets must be non-zero and a power of two");
+    
+    if (!btb_assoc || (btb_assoc & (btb_assoc-1)) != 0)
+      fatal("BTB associativity must be non-zero and a power of two");
+
+    if (!(pred->btb.btb_data = calloc(btb_sets * btb_assoc,
+        sizeof(struct bpred_btb_ent_t))))
     {
-      int i;
-
-      /* allocate BTB */
-      if (!btb_sets || (btb_sets & (btb_sets-1)) != 0)
-	fatal("number of BTB sets must be non-zero and a power of two");
-      if (!btb_assoc || (btb_assoc & (btb_assoc-1)) != 0)
-	fatal("BTB associativity must be non-zero and a power of two");
-
-      if (!(pred->btb.btb_data = calloc(btb_sets * btb_assoc,
-					sizeof(struct bpred_btb_ent_t))))
-	fatal("cannot allocate BTB");
-
-      pred->btb.sets = btb_sets;
-      pred->btb.assoc = btb_assoc;
-
-      if (pred->btb.assoc > 1)
-	for (i=0; i < (pred->btb.assoc*pred->btb.sets); i++)
-	  {
-	    if (i % pred->btb.assoc != pred->btb.assoc - 1)
-	      pred->btb.btb_data[i].next = &pred->btb.btb_data[i+1];
-	    else
-	      pred->btb.btb_data[i].next = NULL;
-	    
-	    if (i % pred->btb.assoc != pred->btb.assoc - 1)
-	      pred->btb.btb_data[i+1].prev = &pred->btb.btb_data[i];
-	  }
-
-      /* allocate retstack */
-      if ((retstack_size & (retstack_size-1)) != 0)
-	fatal("Return-address-stack size must be zero or a power of two");
-      
-      pred->retstack.size = retstack_size;
-      if (retstack_size)
-	if (!(pred->retstack.stack = calloc(retstack_size, 
-					    sizeof(struct bpred_btb_ent_t))))
-	  fatal("cannot allocate return-address-stack");
-      pred->retstack.tos = retstack_size - 1;
-      
-      break;
+      fatal("cannot allocate BTB");
     }
+
+    pred->btb.sets = btb_sets;
+    pred->btb.assoc = btb_assoc;
+
+    if (pred->btb.assoc > 1)
+    {
+      for (int i = 0; i < (pred->btb.assoc*pred->btb.sets); i++)
+      {
+        if (i % pred->btb.assoc != pred->btb.assoc - 1)
+        {
+          pred->btb.btb_data[i].next = &pred->btb.btb_data[i + 1];
+        }
+        else
+        {
+          pred->btb.btb_data[i].next = NULL;
+        }
+        
+        if (i % pred->btb.assoc != pred->btb.assoc - 1)
+        {
+          pred->btb.btb_data[i + 1].prev = &pred->btb.btb_data[i];
+        }
+      }
+    }
+
+    /* allocate retstack */
+    if ((retstack_size & (retstack_size-1)) != 0)
+    {
+      fatal("Return-address-stack size must be zero or a power of two");
+    }
+    
+    pred->retstack.size = retstack_size;
+    if (retstack_size)
+    {
+      if (!(pred->retstack.stack = calloc(retstack_size, 
+              sizeof(struct bpred_btb_ent_t))))
+      {
+        fatal("cannot allocate return-address-stack");
+      }
+    }
+    pred->retstack.tos = retstack_size - 1;
+      
+    break;
 
   case BPredTaken:
   case BPredNotTaken:
@@ -378,7 +391,7 @@ bpred_config(struct bpred_t *pred,	/* branch predictor instance */
 	
   //[###TAGE###]
   case BPredTAGE:
-	bpred_dir_config (pred->dirpred.tage, "ltage", stream);
+	bpred_dir_config (pred->dirpred.tage, "tage", stream);
 	break;
 
   default:
@@ -422,8 +435,9 @@ bpred_reg_stats(struct bpred_t *pred,	/* branch predictor instance */
     case BPredNotTaken:
       name = "bpred_nottaken";
       break;
-	case BPredTAGE: //[###TAGE###]
-	  name = "bpred_tage";
+    case BPredTAGE: //[###TAGE###]
+      name = "bpred_tage";
+      break;
     default:
       panic("bogus branch predictor class");
     }
@@ -589,6 +603,13 @@ bpred_dir_lookup(struct bpred_dir_t *pred_dir,	/* branch dir predictor inst */
     case BPredTaken:
     case BPredNotTaken:
       break;
+#if 0
+/* TODO: Fill out the below case with the tage behavior? Although this case may
+ * end up being empty the BPredTaken and BPredNotTaken cases above.
+ */
+    case BPredTAGE:
+      break;
+#endif
     default:
       panic("bogus branch direction predictor class");
     }
@@ -686,7 +707,7 @@ bpred_lookup(struct bpred_t *pred,	/* branch predictor instance */
 		// Only predict for conditional branches
 		if ((MD_OP_FLAGS(op) & (F_CTRL|F_UNCOND)) != (F_CTRL|F_UNCOND))
 		{
-			dir_update_ptr->tage_base = bpred_dir_lookup (pred->dirpred.bimod, baddr);
+			dir_update_ptr->tage_base = bpred_dir_lookup (pred->dirpred.tage, baddr);
 
 			//[###TAGE###] predict branch
 			//get primary and alt predictions
@@ -1086,9 +1107,13 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
 	  else // No tag match, update base predictor
 	  {
 		  if (taken)
-			  *(dir_update_ptr->tage_base) += (*(dir_update_ptr->tage_base) < 3) ? 1 : 0;
+      {
+			  dir_update_ptr->tage_base += (*(dir_update_ptr->tage_base) < 3) ? 1 : 0;
+      }
 		  else
-			  *(dir_update_ptr->tage_base) -= (*(dir_update_ptr->tage_base) > 0) ? 1 : 0;
+      {
+			  dir_update_ptr->tage_base -= (*(dir_update_ptr->tage_base) > 0) ? 1 : 0;
+      }
 	  }
 	  
 	  // If prediction was wrong and not using longest history, try to allocate a longer history predictor
