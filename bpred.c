@@ -603,9 +603,13 @@ bpred_dir_lookup(struct bpred_dir_t *pred_dir,	/* branch dir predictor inst */
     case BPredTaken:
     case BPredNotTaken:
       break;
+#if 0
+/* TODO: Fill out the below case with the tage behavior? Although this case may
+ * end up being empty the BPredTaken and BPredNotTaken cases above.
+ */
     case BPredTAGE:
-      /* TODO */
       break;
+#endif
     default:
       panic("bogus branch direction predictor class");
     }
