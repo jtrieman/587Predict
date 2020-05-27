@@ -291,7 +291,7 @@ bpred_dir_create (
 	pred_dir->config.tage.alpha = 2; // Hardcode for the moment (matches paper)
 	pred_dir->config.tage.L1 = 2; // Hardcode for the moment (matches paper)
 	pred_dir->config.tage.tag_bits = tage_tag_width; // Number of bits in tag
-	pred_dir->config.tage.base_idx_bits = tage_idx_width;
+	pred_dir->config.tage.base_idx_bits = tage_base_idx_width;
 	pred_dir->config.tage.tag_bits = tage_tag_width;
 	pred_dir->config.tage.T_idx_bits = tage_idx_width;
 	// Create predictor tables (remember to deallocate!!)
