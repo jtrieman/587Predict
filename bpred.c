@@ -291,6 +291,9 @@ bpred_dir_create (
 	pred_dir->config.tage.alpha = 2; // Hardcode for the moment (matches paper)
 	pred_dir->config.tage.L1 = 2; // Hardcode for the moment (matches paper)
 	pred_dir->config.tage.tag_bits = tage_tag_width; // Number of bits in tag
+	pred_dir->config.tage.base_idx_bits = tage_idx_width;
+	pred_dir->config.tage.tag_bits = tage_tag_width;
+	pred_dir->config.tage.T_idx_bits = tage_idx_width;
 	// Create predictor tables (remember to deallocate!!)
 	// Right order? T[bank][row]
 	pred_dir->config.tage.T = calloc(tage_M-1, sizeof *(pred_dir->config.tage.T));
@@ -713,7 +716,7 @@ bpred_lookup(struct bpred_t *pred,	/* branch predictor instance */
 		if ((MD_OP_FLAGS(op) & (F_CTRL|F_UNCOND)) != (F_CTRL|F_UNCOND))
 		{
 			// base index (should probably be changed to hash function)
-			unsigned int base_index = baddr % ((1 << pred->dirpred.tage->config.tage.base_idx_bits) - 1);
+			unsigned int base_index = baddr % (1 << pred->dirpred.tage->config.tage.base_idx_bits);
 			dir_update_ptr->tage_base = &pred->dirpred.tage->config.tage.base_table[base_index];
 
 			//[###TAGE###] predict branch
