@@ -486,7 +486,6 @@ sim_main(void)
       /* get the next instruction to execute */
       MD_FETCH_INST(inst, mem, regs.regs_PC);
 
-      fprintf(stderr, "this far\n");
       /* keep an instruction count */
       sim_num_insn++;
 

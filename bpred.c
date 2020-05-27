@@ -1100,9 +1100,13 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
 	  else // No tag match, update base predictor
 	  {
 		  if (taken)
-			  *(dir_update_ptr->tage_base) += (*(dir_update_ptr->tage_base) < 3) ? 1 : 0;
+      {
+			  dir_update_ptr->tage_base += (*(dir_update_ptr->tage_base) < 3) ? 1 : 0;
+      }
 		  else
-			  *(dir_update_ptr->tage_base) -= (*(dir_update_ptr->tage_base) > 0) ? 1 : 0;
+      {
+			  dir_update_ptr->tage_base -= (*(dir_update_ptr->tage_base) > 0) ? 1 : 0;
+      }
 	  }
 	  
 	  // If prediction was wrong and not using longest history, try to allocate a longer history predictor
