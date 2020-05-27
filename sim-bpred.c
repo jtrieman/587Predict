@@ -104,6 +104,15 @@ static int ras_size = 8;
 static int btb_nelt = 2;
 static int btb_config[2] =
   { /* nsets */512, /* assoc */4 };
+  
+/* TAGE config */
+static int tage_nelt = 4;
+// Based on 32k storage budget 2^15 storage
+// From paper for the 5 component predictor:
+// n-4 = 11 bits for base predictor index
+// n-6 = 9 bit tagged predictor index bits
+static int tage_config[4] =
+  { /* M entries */5, /* tag width */9, /* index width */9, /* base index width */ 11 };
 
 /* branch predictor */
 static struct bpred_t *pred;
@@ -168,6 +177,13 @@ sim_reg_options(struct opt_odb_t *odb)
 		   comb_config, comb_nelt, &comb_nelt,
 		   /* default */comb_config,
 		   /* print */TRUE, /* format */NULL, /* !accrue */FALSE);
+    
+   opt_reg_int_list(odb, "-bpred:tage",
+		   "tage predictor config "
+		   "(<tage_M> <tage_tag_width> <tage_idx_width> <tage_base_idx_width>)",
+		   tage_config, tage_nelt, &tage_nelt,
+		   /* default */tage_config,
+		   /* print */TRUE, /* format */NULL, /* !accrue */FALSE); // not sure what the last line does
 
   opt_reg_int(odb, "-bpred:ras",
               "return address stack size (0 for no return stack)",
@@ -179,6 +195,7 @@ sim_reg_options(struct opt_odb_t *odb)
 		   btb_config, btb_nelt, &btb_nelt,
 		   /* default */btb_config,
 		   /* print */TRUE, /* format */NULL, /* !accrue */FALSE);
+
 }
 
 /* check simulator-specific option values */
@@ -188,12 +205,12 @@ sim_check_options(struct opt_odb_t *odb, int argc, char **argv)
   if (!mystricmp(pred_type, "taken"))
     {
       /* static predictor, not taken */
-      pred = bpred_create(BPredTaken, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+      pred = bpred_create(BPredTaken, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
   else if (!mystricmp(pred_type, "nottaken"))
     {
       /* static predictor, taken */
-      pred = bpred_create(BPredNotTaken, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+      pred = bpred_create(BPredNotTaken, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
   else if (!mystricmp(pred_type, "bimod"))
     {
@@ -210,6 +227,7 @@ sim_check_options(struct opt_odb_t *odb, int argc, char **argv)
 			  /* meta table size */0,
 			  /* history reg size */0,
 			  /* history xor address */0,
+			  /* pred parameters */ 0, 0, 0, 0,
 			  /* btb sets */btb_config[0],
 			  /* btb assoc */btb_config[1],
 			  /* ret-addr stack size */ras_size);
@@ -229,6 +247,7 @@ sim_check_options(struct opt_odb_t *odb, int argc, char **argv)
 			  /* meta table size */0,
 			  /* history reg size */twolev_config[2],
 			  /* history xor address */twolev_config[3],
+			  /* pred parameters */ 0, 0, 0, 0,
 			  /* btb sets */btb_config[0],
 			  /* btb assoc */btb_config[1],
 			  /* ret-addr stack size */ras_size);
@@ -252,6 +271,7 @@ sim_check_options(struct opt_odb_t *odb, int argc, char **argv)
 			  /* meta table size */comb_config[0],
 			  /* history reg size */twolev_config[2],
 			  /* history xor address */twolev_config[3],
+			  /* pred parameters */ 0, 0, 0, 0,
 			  /* btb sets */btb_config[0],
 			  /* btb assoc */btb_config[1],
 			  /* ret-addr stack size */ras_size);
@@ -263,12 +283,13 @@ sim_check_options(struct opt_odb_t *odb, int argc, char **argv)
      * the tage case of bpred_create()
      */
     pred = bpred_create(BPredTAGE,
-			  /* bimod table size */bimod_config[0],
+			  /* bimod table size */0,
 			  /* 2lev l1 size */0,
 			  /* 2lev l2 size */0,
 			  /* meta table size */0,
 			  /* history reg size */0,
 			  /* history xor address */0,
+			  /* tage parameters */ tage_config[0], tage_config[1], tage_config[2], tage_config[3],
 			  /* btb sets */btb_config[0],
 			  /* btb assoc */btb_config[1],
 			  /* ret-addr stack size */ras_size);

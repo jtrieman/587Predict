@@ -147,8 +147,9 @@ struct bpred_dir_t {
 		int alpha; // Geometric series parameters (ratio between component history lengths
 		int L1; // Geometric series parameter (T[1] history length)
 		int tag_bits; // Number of bits in tag
-		int base_entries; // entries in base predictor
-		int T_entries; // entries in tagged predictors
+		int base_idx_bits; // bits base predictor
+		unsigned char *base_table; // base predictor table
+		int T_idx_bits; // index bits in tagged predictors
 		int *history_length;
 		tage_entry_t **T;
 		unsigned int *index;
@@ -206,7 +207,7 @@ struct bpred_update_t {
   char *pdir1;		/* direction-1 predictor counter */
   char *pdir2;		/* direction-2 predictor counter */
   char *pmeta;		/* meta predictor counter */
-  char *tage_base;
+  unsigned char *tage_base;
   tage_entry_t *tage_pred;
   tage_entry_t *tage_altpred;
   unsigned int tage_index;
@@ -230,6 +231,10 @@ bpred_create(enum bpred_class class,	/* type of predictor to create */
 	     unsigned int meta_size,	/* meta predictor table size */
 	     unsigned int shift_width,	/* history register width */
 	     unsigned int xor,		/* history xor address flag */
+		 unsigned int tage_M, 			/* tage number of tables (including base) */
+		 unsigned int tage_tag_width,	/* tage tag width */
+		 unsigned int tage_idx_width, /* tage predictor index width */
+		 unsigned int tage_base_idx_width, /* tage base predictor index bits */
 	     unsigned int btb_sets,	/* number of sets in BTB */ 
 	     unsigned int btb_assoc,	/* BTB associativity */
 	     unsigned int retstack_size);/* num entries in ret-addr stack */
@@ -244,7 +249,8 @@ bpred_dir_create (
   unsigned int xor,	   		/* history xor address flag */
   unsigned int tage_M, 			/* tage number of tables (including base) */
   unsigned int tage_tag_width,	/* tage tag width */
-  unsigned int tage_predictor_rows); /* tage predictor rows (sets index width) */
+  unsigned int tage_idx_width, /* tage predictor index width */
+  unsigned int tage_base_idx_width); /* tage base predictor index bits */
 
 /* print branch predictor configuration */
 void

@@ -72,6 +72,10 @@ bpred_create(enum bpred_class class,	/* type of predictor to create */
 	     unsigned int meta_size,	/* meta table size */
 	     unsigned int shift_width,	/* history register width */
 	     unsigned int xor,  	/* history xor address flag */
+		 unsigned int tage_M, 			/* tage number of tables (including base) */
+		 unsigned int tage_tag_width,	/* tage tag width */
+		 unsigned int tage_idx_width, /* tage predictor index width */
+		 unsigned int tage_base_idx_width, /* tage base predictor index bits */
 	     unsigned int btb_sets,	/* number of sets in BTB */ 
 	     unsigned int btb_assoc,	/* BTB associativity */
 	     unsigned int retstack_size) /* num entries in ret-addr stack */
@@ -87,27 +91,27 @@ bpred_create(enum bpred_class class,	/* type of predictor to create */
   case BPredComb:
     /* bimodal component */
     pred->dirpred.bimod = 
-      bpred_dir_create(BPred2bit, bimod_size, 0, 0, 0, 0, 0, 0);
+      bpred_dir_create(BPred2bit, bimod_size, 0, 0, 0, 0, 0, 0, 0);
 
     /* 2-level component */
     pred->dirpred.twolev = 
-      bpred_dir_create(BPred2Level, l1size, l2size, shift_width, xor, 0, 0, 0);
+      bpred_dir_create(BPred2Level, l1size, l2size, shift_width, xor, 0, 0, 0, 0);
 
     /* metapredictor component */
     pred->dirpred.meta = 
-      bpred_dir_create(BPred2bit, meta_size, 0, 0, 0, 0, 0, 0);
+      bpred_dir_create(BPred2bit, meta_size, 0, 0, 0, 0, 0, 0, 0);
 
     break;
 
   case BPred2Level:
     pred->dirpred.twolev = 
-      bpred_dir_create(class, l1size, l2size, shift_width, xor, 0, 0, 0);
+      bpred_dir_create(class, l1size, l2size, shift_width, xor, 0, 0, 0, 0);
 
     break;
 
   case BPred2bit:
     pred->dirpred.bimod = 
-      bpred_dir_create(class, bimod_size, 0, 0, 0, 0, 0, 0);
+      bpred_dir_create(class, bimod_size, 0, 0, 0, 0, 0, 0, 0);
 
   case BPredTaken:
   case BPredNotTaken:
@@ -115,8 +119,7 @@ bpred_create(enum bpred_class class,	/* type of predictor to create */
     break;
 	
   case BPredTAGE: //[###TAGE###]
-    // Replace last 3 0s with tage parameters
-    pred->dirpred.tage = bpred_dir_create(class, bimod_size, 0, 0, 0, 1, 0, 0);
+    pred->dirpred.tage = bpred_dir_create(class, 0, 0, 0, 0, tage_M, tage_tag_width, tage_idx_width, tage_base_idx_width);
     break;
 
   default:
@@ -207,7 +210,8 @@ bpred_dir_create (
   unsigned int xor,	   		/* history xor address flag */
   unsigned int tage_M, 			/* tage number of tables (including base) */
   unsigned int tage_tag_width,	/* tage tag width */
-  unsigned int tage_rows) /* tage predictor rows (sets index width) */
+  unsigned int tage_idx_width, /* tage predictor index width */
+  unsigned int tage_base_idx_width) /* tage base predictor index bits */
 {
   struct bpred_dir_t *pred_dir;
   unsigned int cnt;
@@ -291,10 +295,11 @@ bpred_dir_create (
 	// Right order? T[bank][row]
 	pred_dir->config.tage.T = calloc(tage_M-1, sizeof *(pred_dir->config.tage.T));
 	for (int i=0; i<tage_M-1; i++){
-		pred_dir->config.tage.T[i] = calloc(tage_rows, sizeof *(pred_dir->config.tage.T[i]));
+		pred_dir->config.tage.T[i] = calloc((1 << tage_idx_width), sizeof *(pred_dir->config.tage.T[i]));
 	}
     if (!pred_dir->config.tage.T)
 	fatal("cannot allocate tage tables");
+	pred_dir->config.tage.base_table = calloc((1 << tage_base_idx_width), sizeof(unsigned char));
 	pred_dir->config.tage.tag = calloc(tage_M-1, sizeof(unsigned int));
 	pred_dir->config.tage.index = calloc(tage_M-1, sizeof(unsigned int));
 	pred_dir->config.tage.history_length = calloc(tage_M-1, sizeof(int));
@@ -307,7 +312,7 @@ bpred_dir_create (
 	pred_dir->config.tage.phist = 0; // init path history (1 bit per branch)
 	pred_dir->config.tage.global_behavior = 8; // initialize to (weakly) use newly allocated predictor
 	break;
-
+	
   default:
     panic("bogus branch direction predictor class");
   }
@@ -707,7 +712,9 @@ bpred_lookup(struct bpred_t *pred,	/* branch predictor instance */
 		// Only predict for conditional branches
 		if ((MD_OP_FLAGS(op) & (F_CTRL|F_UNCOND)) != (F_CTRL|F_UNCOND))
 		{
-			dir_update_ptr->tage_base = bpred_dir_lookup (pred->dirpred.tage, baddr);
+			// base index (should probably be changed to hash function)
+			unsigned int base_index = baddr % ((1 << pred->dirpred.tage->config.tage.base_idx_bits) - 1);
+			dir_update_ptr->tage_base = &pred->dirpred.tage->config.tage.base_table[base_index];
 
 			//[###TAGE###] predict branch
 			//get primary and alt predictions
@@ -1108,11 +1115,11 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
 	  {
 		  if (taken)
       {
-			  dir_update_ptr->tage_base += (*(dir_update_ptr->tage_base) < 3) ? 1 : 0;
+			  *(dir_update_ptr->tage_base) += (*(dir_update_ptr->tage_base) < 3) ? 1 : 0;
       }
 		  else
       {
-			  dir_update_ptr->tage_base -= (*(dir_update_ptr->tage_base) > 0) ? 1 : 0;
+			  *(dir_update_ptr->tage_base) -= (*(dir_update_ptr->tage_base) > 0) ? 1 : 0;
       }
 	  }
 	  
@@ -1317,7 +1324,8 @@ void hash(struct bpred_t *pred, int bank, unsigned int pc, unsigned int *tag, un
 	// 2^n entries:
 	// pc[3n:0] ^ phist ^ ghist (folded I would assume)
 	//*index = pc[9:0] ^ pc[19:10] ^ CSR
-	*index = pc;
+	// Just a scratch hash function for index (change to hash function from paper author's code)
+	*index = (pc ^ (pc >> pred->dirpred.tage->config.tage.T_idx_bits) ^ csr1 ^ (csr2 << 1)) & ((1 << pred->dirpred.tage->config.tage.T_idx_bits) - 1);
 }
 
 void update_tags_and_indicies(struct bpred_t *pred, unsigned int pc)
