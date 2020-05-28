@@ -746,10 +746,8 @@ bpred_lookup(struct bpred_t *pred,	/* branch predictor instance */
 					pred_ptr = &pred->dirpred.tage->config.tage.T[bank-1][index];
 				}
 			}
-			if (pred_ptr)
-				dir_update_ptr->tage_pred = pred_ptr;
-			if (altpred_ptr)
-				dir_update_ptr->tage_altpred = altpred_ptr;
+			dir_update_ptr->tage_pred = pred_ptr;
+			dir_update_ptr->tage_altpred = altpred_ptr;
 		}
 	break;
 	
@@ -1072,14 +1070,15 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
   {
 	  // TAGE update
 	  _Bool base_pred, alt_pred, provider;
-	  base_pred = (*(dir_update_ptr->tage_base) > 2) ? 1 : 0;
-	  
+	  if (!dir_update_ptr->tage_base) // Hacky uglyness [for some reason update is called first]
+		  return;
+	  base_pred = (*(dir_update_ptr->tage_base) >= 2) ? 1 : 0;
 	  // If tag match exists, update provider
 	  if (dir_update_ptr->tage_pred)
 	  {  
-		  provider = (dir_update_ptr->tage_pred->ctr > 4) ? 1 : 0;
+		  provider = (dir_update_ptr->tage_pred->ctr >= 4) ? 1 : 0;
 		  if (dir_update_ptr->tage_altpred)
-			  alt_pred = (dir_update_ptr->tage_altpred->ctr > 4) ? 1 : 0;
+			  alt_pred = (dir_update_ptr->tage_altpred->ctr >= 4) ? 1 : 0;
 		  else
 			  alt_pred = base_pred;
 		  
@@ -1117,17 +1116,21 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
 	  else // No tag match, update base predictor
 	  {
 		  if (taken)
-      {
+		  {
 			  *(dir_update_ptr->tage_base) += (*(dir_update_ptr->tage_base) < 3) ? 1 : 0;
-      }
+		  }
 		  else
-      {
+          {
 			  *(dir_update_ptr->tage_base) -= (*(dir_update_ptr->tage_base) > 0) ? 1 : 0;
-      }
+          }
 	  }
 	  
 	  // If prediction was wrong and not using longest history, try to allocate a longer history predictor
 	  unsigned char p_bank = dir_update_ptr->tage_bank;
+	  // Initial allocation p_bank == 0
+	  if (p_bank == 0)
+		  p_bank = 1; // Right init value?
+	  
 	  int select = 0;
 	  int allocate_bank = 0;
 	  int M = pred->dirpred.tage->config.tage.M;
@@ -1138,19 +1141,20 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
 		  update_tags_and_indicies(pred, baddr);
 		  for (int bank = p_bank; bank < M; bank++)
 		  {
-			  if(pred->dirpred.tage->config.tage.T[bank-1][pred->dirpred.tage->config.tage.index[bank]].u == 0)
+			  if(pred->dirpred.tage->config.tage.T[bank-1][pred->dirpred.tage->config.tage.index[bank-1]].u == 0)
 			  {
 				  Tj = Tk;
 				  Tk = bank;
 			  }
 		  }
+		  
 		  // If there are no banks with u == 0, decrement all useful counters above provider bank
 		  // Don't allocate
 		  if (Tk == 0) // No banks with u == 0
 		  {
 			  // Decrement all useful counters
 			  for (int bank = p_bank; bank < M; bank++)
-			      --pred->dirpred.tage->config.tage.T[bank-1][pred->dirpred.tage->config.tage.index[bank]].u;
+			      --pred->dirpred.tage->config.tage.T[bank-1][pred->dirpred.tage->config.tage.index[bank-1]].u;
 		  }
 		  else if (Tj == 0) // 1 bank with u = 0
 		  {
@@ -1169,15 +1173,19 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
 				  allocate_bank = Tk;
 		  }
 		  
-		  // allocate new entry
-		  tage_entry_t *new_entry = &pred->dirpred.tage->config.tage.T[allocate_bank-1][pred->dirpred.tage->config.tage.index[allocate_bank]];
-		  new_entry->u = 0; // a bit redundant as u should already be 0
-		  // According to paper, should be set to weakly correct
-		  if (taken)
-			  new_entry->ctr = 4; // weakly taken
-		  else
-			  new_entry->ctr = 3; // weekly not taken
-		  new_entry->tag = pred->dirpred.tage->config.tage.tag[allocate_bank-1]; // Should hash be updated before this?
+		  // Only allocate if a u==0 bank was found
+		  if (allocate_bank != 0)
+		  {
+			  // allocate new entry
+			  tage_entry_t *new_entry = &pred->dirpred.tage->config.tage.T[allocate_bank-1][pred->dirpred.tage->config.tage.index[allocate_bank-1]];
+			  new_entry->u = 0; // a bit redundant as u should already be 0
+			  // According to paper, should be set to weakly correct
+			  if (taken)
+				  new_entry->ctr = 4; // weakly taken
+			  else
+				  new_entry->ctr = 3; // weekly not taken
+			  new_entry->tag = pred->dirpred.tage->config.tage.tag[allocate_bank-1]; // Should hash be updated before this?
+		  }
 	  }		
 			  
 		  
@@ -1313,14 +1321,12 @@ void hash(struct bpred_t *pred, int bank, unsigned int pc, unsigned int *tag, un
 	{
 		csr1 ^= ghist_bits(i*tag_bits, (i+1)*tag_bits - 1, pred->dirpred.tage->config.tage.ghist);
 	}
-
 	// Second alternate size CSR to avoid issues with repeated history pattern
 	unsigned int csr2 = 0;
 		for (i = 0; i < ceil(pred->dirpred.tage->config.tage.history_length[bank] / (tag_bits - 1)); i++)
 	{
 		csr2 ^= ghist_bits(i*(tag_bits - 1), (i+1)*(tag_bits - 1) - 1, pred->dirpred.tage->config.tage.ghist);
 	}
-
 	// Calculate tag and index
 	*tag = (pc ^ csr1 ^ (csr2 << 1)) & ((1 << tag_bits) - 1);
 	// O-GEHL paper index hash function:
