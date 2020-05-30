@@ -144,7 +144,7 @@ struct bpred_dir_t {
 	struct { //[###TAGE###]
 		// ltage parameters
 		int M; // Number of compnents (including base bimodal predictor.
-		int alpha; // Geometric series parameters (ratio between component history lengths
+		double alpha; // Geometric series parameters (ratio between component history lengths
 		int L1; // Geometric series parameter (T[1] history length)
 		int tag_bits; // Number of bits in tag
 		int base_idx_bits; // bits base predictor

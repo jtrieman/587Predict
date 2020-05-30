@@ -288,14 +288,16 @@ bpred_dir_create (
   case BPredTAGE:
 	// Apply passed parameters.
 	pred_dir->config.tage.M = tage_M;
-	pred_dir->config.tage.alpha = 2; // Hardcode for the moment (matches paper)
-	pred_dir->config.tage.L1 = 2; // Hardcode for the moment (matches paper)
+	pred_dir->config.tage.L1 = 5; // Hardcode for the moment (matches paper)
+	//pred_dir->config.tage.alpha = 2; // Hardcode for the moment (matches paper)
+	// Calculate alpha to achieve a 125 max global history length.
+	// 
+	pred_dir->config.tage.alpha = pow((125.0 / pred_dir->config.tage.L1), 1.0/(tage_M - 2));
 	pred_dir->config.tage.tag_bits = tage_tag_width; // Number of bits in tag
 	pred_dir->config.tage.base_idx_bits = tage_base_idx_width;
 	pred_dir->config.tage.tag_bits = tage_tag_width;
 	pred_dir->config.tage.T_idx_bits = tage_idx_width;
-	// Create predictor tables (remember to deallocate!!)
-	// Right order? T[bank][row]
+	// Create predictor tables (remember to deallocate!)
 	pred_dir->config.tage.T = calloc(tage_M-1, sizeof (tage_entry_t *));
 	for (int i=0; i<tage_M-1; i++){
 		pred_dir->config.tage.T[i] = calloc((1 << tage_idx_width), sizeof (tage_entry_t));
@@ -306,9 +308,13 @@ bpred_dir_create (
 	pred_dir->config.tage.tag = calloc(tage_M-1, sizeof(unsigned int));
 	pred_dir->config.tage.index = calloc(tage_M-1, sizeof(unsigned int));
 	pred_dir->config.tage.history_length = calloc(tage_M-1, sizeof(int));
+	fprintf(stderr, "alpha: %lf\n", pred_dir->config.tage.alpha);
 	// initialize the geometric series history lengths
 	for (int i = 0; i < tage_M-1; i++)
+	{
 		pred_dir->config.tage.history_length[i] = (int)(pow(pred_dir->config.tage.alpha, i)*pred_dir->config.tage.L1 + 0.5);
+		fprintf(stderr, "table %d history length: %d\n", i, pred_dir->config.tage.history_length[i]);
+	}
 	// Initialize ghist to all 0
 	for (int i = 0; i < 16; i++)
 		pred_dir->config.tage.ghist[i] = 0;
@@ -715,8 +721,8 @@ bpred_lookup(struct bpred_t *pred,	/* branch predictor instance */
 		// Only predict for conditional branches
 		if ((MD_OP_FLAGS(op) & (F_CTRL|F_UNCOND)) != (F_CTRL|F_UNCOND))
 		{
-			// base index (should probably be changed to hash function)
-			unsigned int base_index = baddr % (1 << pred->dirpred.tage->config.tage.base_idx_bits);
+			// use same hash function as simplescalar bimod predictor for ease of comparison
+			unsigned int base_index = ((baddr >> 19) ^ (baddr >> MD_BR_SHIFT)) & ((1 << pred->dirpred.tage->config.tage.base_idx_bits)-1);
 			dir_update_ptr->tage_base = &pred->dirpred.tage->config.tage.base_table[base_index];
 
 			//[###TAGE###] predict branch
@@ -830,11 +836,12 @@ bpred_lookup(struct bpred_t *pred,	/* branch predictor instance */
 	  // If match was found, check if the entry was recently added.
 	  if (dir_update_ptr->tage_pred)
 	  {
-			// check if new (null u, count indicating weekly taken or not taken):
-			if ((dir_update_ptr->tage_pred->u == 0) && 
-				((dir_update_ptr->tage_pred->ctr == 3) ||
-				(dir_update_ptr->tage_pred->ctr == 4)) &&
-				(pred->dirpred.tage->config.tage.global_behavior < 8)) // 4 bit global new branch behavior
+		  // check if new (null u, count indicating weekly taken or not taken)
+		  _Bool newly_allocated = 
+			(dir_update_ptr->tage_pred->u == 0) && ((dir_update_ptr->tage_pred->ctr == 3) || (dir_update_ptr->tage_pred->ctr == 4));
+			
+			// if newly allocated 
+			if (newly_allocated && (pred->dirpred.tage->config.tage.global_behavior < 8)) // 4 bit global new branch behavior predictor
 			{
 				// Use alt brediction (or base if there was only one tag match)
 				if (dir_update_ptr->tage_altpred)
@@ -903,6 +910,7 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
   struct bpred_btb_ent_t *pbtb = NULL;
   struct bpred_btb_ent_t *lruhead = NULL, *lruitem = NULL;
   int index, i;
+  static unsigned int branch_count;
 
   /* don't change bpred state for non-branch instructions or if this
    * is a stateless predictor*/
@@ -1065,143 +1073,166 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
    * matched-on entry or a victim which was LRU in its set)
    */
 
-  /* TAGE update */
+  /* TAGE update. Only update for conditional branches */
   if (pred->class == BPredTAGE)
   {
 	  // TAGE update
-	  _Bool base_pred, alt_pred, provider;
-	  if (!dir_update_ptr->tage_base) // Hacky uglyness [for some reason update is called first]
-		  return;
-	  base_pred = (*(dir_update_ptr->tage_base) >= 2) ? 1 : 0;
-	  // If tag match exists, update provider
-	  if (dir_update_ptr->tage_pred)
-	  {  
-		  provider = (dir_update_ptr->tage_pred->ctr >= 4) ? 1 : 0;
-		  if (dir_update_ptr->tage_altpred)
-			  alt_pred = (dir_update_ptr->tage_altpred->ctr >= 4) ? 1 : 0;
-		  else
-			  alt_pred = base_pred;
-		  
-		  // Update useful counter if provider and alternate disagree
-		  if (provider != alt_pred)
-		  {
-			  // We need to update the global newly allocated predictor behavoir counter
-			  // I'm not sure this is the right place but it seems to make sense to only update it
-			  // when the primary and alt predictions don't agree.
-			  // This is a check for newly allocated so doing the global update before updating the useful bits.
+	  // update dags and indexes at the top???
+	  // Only update if it's a conditional branch
+	  //if ((MD_OP_FLAGS(op) & (F_CTRL|F_UNCOND)) != (F_CTRL|F_UNCOND))
+	  if ((MD_OP_FLAGS(op) & (F_CTRL|F_COND)) == (F_CTRL|F_COND))
+	  {
+		  _Bool base_pred, alt_pred, provider;
+		  if (!dir_update_ptr->tage_base) // Hacky uglyness [for some reason update is called first]
+			  return;
+		  base_pred = (*(dir_update_ptr->tage_base) >= 2) ? 1 : 0;
+		  // If tag match exists, update provider
+		  if (dir_update_ptr->tage_pred)
+		  {  
+			  provider = (dir_update_ptr->tage_pred->ctr >= 4) ? 1 : 0;
+			  if (dir_update_ptr->tage_altpred)
+				  alt_pred = (dir_update_ptr->tage_altpred->ctr >= 4) ? 1 : 0;
+			  else
+				  alt_pred = base_pred;
 			  
-			  if ((dir_update_ptr->tage_pred->u == 0) && 
-				((dir_update_ptr->tage_pred->ctr == 3) ||
-				(dir_update_ptr->tage_pred->ctr == 4)))
+			  // Update useful counter if provider and alternate disagree
+			  if (provider != alt_pred)
 			  {
-				  int global = pred->dirpred.tage->config.tage.global_behavior;
-				  if (provider == taken)
-					 pred->dirpred.tage->config.tage.global_behavior += (global < 15) ? 1 : 0;
+				  // We need to update the global newly allocated predictor behavoir counter
+				  // I'm not sure this is the right place but it seems to make sense to only update it
+				  // when the primary and alt predictions don't agree.
+				  // This is a check for newly allocated so doing the global update before updating the useful bits.
+				  
+				  if ((dir_update_ptr->tage_pred->u == 0) && 
+					((dir_update_ptr->tage_pred->ctr == 3) ||
+					(dir_update_ptr->tage_pred->ctr == 4)))
+				  {
+					  int global = pred->dirpred.tage->config.tage.global_behavior;
+					  if (provider == taken)
+						 pred->dirpred.tage->config.tage.global_behavior += (global < 15) ? 1 : 0;
+					  else
+						 pred->dirpred.tage->config.tage.global_behavior -= (global > 0) ? 1 : 0;
+				  }
+				  
+				  if(provider == taken)
+					  dir_update_ptr->tage_pred->u += (dir_update_ptr->tage_pred->u < 3) ? 1 : 0;
 				  else
-					 pred->dirpred.tage->config.tage.global_behavior -= (global > 0) ? 1 : 0;
+					  dir_update_ptr->tage_pred->u -= (dir_update_ptr->tage_pred->u > 0) ? 1 : 0;
 			  }
 			  
-			  if(provider == taken)
-				  dir_update_ptr->tage_pred->u += (dir_update_ptr->tage_pred->u < 3) ? 1 : 0;
-			  else
-				  dir_update_ptr->tage_pred->u -= (dir_update_ptr->tage_pred->u > 0) ? 1 : 0;
-		  }
-		  
-		  // Update counter
-		  if (taken)
-			  dir_update_ptr->tage_pred->ctr += (dir_update_ptr->tage_pred->ctr < 7) ? 1 : 0;
-		  else
-			  dir_update_ptr->tage_pred->ctr -= (dir_update_ptr->tage_pred->ctr > 0) ? 1 : 0;
-	  }
-	  else // No tag match, update base predictor
-	  {
-		  if (taken)
-		  {
-			  *(dir_update_ptr->tage_base) += (*(dir_update_ptr->tage_base) < 3) ? 1 : 0;
-		  }
-		  else
-          {
-			  *(dir_update_ptr->tage_base) -= (*(dir_update_ptr->tage_base) > 0) ? 1 : 0;
-          }
-	  }
-	  
-	  // If prediction was wrong and not using longest history, try to allocate a longer history predictor
-	  unsigned char p_bank = dir_update_ptr->tage_bank;
-	  // Initial allocation p_bank == 0
-	  if (p_bank == 0)
-		  p_bank = 1; // Right init value?
-	  
-	  int select = 0;
-	  int allocate_bank = 0;
-	  int M = pred->dirpred.tage->config.tage.M;
-	  int Tk = 0, Tj = 0; // Free banks
-	  if ((taken != pred_taken) && (p_bank != (M-1)))
-	  {
-		  // update tags and indicies
-		  update_tags_and_indicies(pred, baddr);
-		  for (int bank = p_bank; bank < M; bank++)
-		  {
-			  if(pred->dirpred.tage->config.tage.T[bank-1][pred->dirpred.tage->config.tage.index[bank-1]].u == 0)
-			  {
-				  Tj = Tk;
-				  Tk = bank;
-			  }
-		  }
-		  
-		  // If there are no banks with u == 0, decrement all useful counters above provider bank
-		  // Don't allocate
-		  if (Tk == 0) // No banks with u == 0
-		  {
-			  // Decrement all useful counters
-			  for (int bank = p_bank; bank < M; bank++)
-			      --pred->dirpred.tage->config.tage.T[bank-1][pred->dirpred.tage->config.tage.index[bank-1]].u;
-		  }
-		  else if (Tj == 0) // 1 bank with u = 0
-		  {
-			  allocate_bank = Tk;
-		  }
-		  else
-		  {
-			  // To prevent "ping-phenomemon", choose probabalistically between 0 u banks.
-			  // Weighting toward the shorter history.
-			  // Unclear from paper but it appears this would be the two longest histories.
-			  // Choose the next to last avaialable bank twice as often as the last.
-			  select = rand();
-			  if (select > RAND_MAX/3)
-				  allocate_bank = Tj;
-			  else
-				  allocate_bank = Tk;
-		  }
-		  
-		  // Only allocate if a u==0 bank was found
-		  if (allocate_bank != 0)
-		  {
-			  // allocate new entry
-			  tage_entry_t *new_entry = &pred->dirpred.tage->config.tage.T[allocate_bank-1][pred->dirpred.tage->config.tage.index[allocate_bank-1]];
-			  new_entry->u = 0; // a bit redundant as u should already be 0
-			  // According to paper, should be set to weakly correct
+			  // Update counter
 			  if (taken)
-				  new_entry->ctr = 4; // weakly taken
+				  dir_update_ptr->tage_pred->ctr += (dir_update_ptr->tage_pred->ctr < 7) ? 1 : 0;
 			  else
-				  new_entry->ctr = 3; // weekly not taken
-			  new_entry->tag = pred->dirpred.tage->config.tage.tag[allocate_bank-1]; // Should hash be updated before this?
+				  dir_update_ptr->tage_pred->ctr -= (dir_update_ptr->tage_pred->ctr > 0) ? 1 : 0;
 		  }
-	  }		
-			  
+		  else // No tag match, update base predictor
+		  {
+			  if (taken)
+			  {
+				  *(dir_update_ptr->tage_base) += (*(dir_update_ptr->tage_base) < 3) ? 1 : 0;
+			  }
+			  else
+			  {
+				  *(dir_update_ptr->tage_base) -= (*(dir_update_ptr->tage_base) > 0) ? 1 : 0;
+			  }
+		  }
 		  
-	  // if predcount == 256,000
-	  // 	if low reset all low bits else reset all high bits (for privider bank or all?)
-	  // if prediction was wrong and not highest bank:
-	  // 	if not highest bank
-	  // 	if no u are 0, decrement all u
-	  //	else if two have uk == 0
-	  //		choose lower with higher probability
-	  // update ghist
-	  update_ghist(taken, &pred->dirpred.tage->config.tage.ghist[0]);
-	  // update phist (least significant bit. Unclear which bit paper used.)
-	  pred->dirpred.tage->config.tage.phist <<= 1;
-	  pred->dirpred.tage->config.tage.phist |= baddr & 1;
-	  
+		  // If prediction was wrong and not using longest history, try to allocate a longer history predictor
+		  unsigned char p_bank = dir_update_ptr->tage_bank;
+		  // Initial allocation p_bank == 0
+		  if (p_bank == 0)
+			  p_bank = 1; // Right init value?
+		  
+		  int select = 0;
+		  int allocate_bank = 0;
+		  int M = pred->dirpred.tage->config.tage.M;
+		  int Tk = 0, Tj = 0; // Free banks
+		  if ((taken != pred_taken) && (p_bank != (M-1)))
+		  {
+			  // update tags and indicies
+			  update_tags_and_indicies(pred, baddr);
+			  _Bool match = 0;
+			  for (int bank = p_bank; bank < M; bank++)
+			  {
+				  if(pred->dirpred.tage->config.tage.T[bank-1][pred->dirpred.tage->config.tage.index[bank-1]].u == 0)
+				  {
+					  if (match)
+					  {
+						  Tk = bank;
+						  break;
+					  }
+					  else
+					  {
+						  Tj = bank;
+						  match = 1;
+					  }
+						//Tj = Tk;
+						//Tk = bank;
+				  }
+			  }
+			  
+			  // If there are no banks with u == 0, decrement all useful counters above provider bank
+			  // Don't allocate
+			  if (Tj == 0) // No banks with u == 0
+			  {
+				  // Decrement all useful counters
+				  for (int bank = p_bank; bank < M; bank++)
+					  --pred->dirpred.tage->config.tage.T[bank-1][pred->dirpred.tage->config.tage.index[bank-1]].u;
+			  }
+			  else if (Tk == 0) // 1 bank with u = 0
+			  {
+				  allocate_bank = Tj;
+			  }
+			  else
+			  {
+				  // To prevent "ping-phenomemon", choose probabalistically between 0 u banks.
+				  // Weighting toward the shorter history.
+				  // Unclear from paper but it appears this would be the two longest histories.
+				  // Choose the next to last avaialable bank twice as often as the last.
+				  select = rand();
+				  if (select > RAND_MAX/3)
+					  allocate_bank = Tj;
+				  else
+					  allocate_bank = Tk;
+			  }
+			  
+			  // Only allocate if a u==0 bank was found
+			  if (allocate_bank != 0)
+			  {
+				  // allocate new entry
+				  tage_entry_t *new_entry = &pred->dirpred.tage->config.tage.T[allocate_bank-1][pred->dirpred.tage->config.tage.index[allocate_bank-1]];
+				  new_entry->u = 0; // a bit redundant as u should already be 0
+				  // According to paper, should be set to weakly correct
+				  if (taken)
+					  new_entry->ctr = 4; // weakly taken
+				  else
+					  new_entry->ctr = 3; // weekly not taken
+				  new_entry->tag = pred->dirpred.tage->config.tage.tag[allocate_bank-1]; // Should hash be updated before this?
+			  }
+		  }		
+				  
+		  /*if (branch_count == 256000)
+		  {
+			  for (int bank = 1; bank < pred->dirpred.tage->config.tage.M; bank++)
+				for (int row = 0; row < ((1 << pred->dirpred.tage->config.tage.T_idx_bits) - 1); row++)
+					pred->dirpred.tage->config.tage.T[bank-1][row].u >>= 1;
+			  branch_count = 0;
+		  }
+		  else
+			  ++branch_count;*/
+		  // if predcount == 256,000
+		  // 	if low reset all low bits else reset all high bits (for privider bank or all?)
+		  // if prediction was wrong and not highest bank:
+		  // 	if not highest bank
+		  // 	if no u are 0, decrement all u
+		  //	else if two have uk == 0
+		  //		choose lower with higher probability
+		  // update phist (least significant bit. Unclear which bit paper used.)
+			pred->dirpred.tage->config.tage.phist <<= 1;
+			pred->dirpred.tage->config.tage.phist |= (baddr>>MD_BR_SHIFT) & 1; // right shift by 3 (lowest 3 bits always appear to be 0)
+		    update_ghist(taken, pred->dirpred.tage->config.tage.ghist);
+	  }
   }
   else
   {
@@ -1293,6 +1324,8 @@ void update_ghist(_Bool new_bit, uint32_t *ghist)
 }
 
 // get bits (range inclusive)
+
+
 uint32_t ghist_bits(int start_bit, int stop_bit, uint32_t ghist[])
 {
 	// Assuming width requested is less than 32
@@ -1311,36 +1344,63 @@ uint32_t ghist_bits(int start_bit, int stop_bit, uint32_t ghist[])
 }
 
 // Calculate index and tag based on tage parameters, global, and path history
-void hash(struct bpred_t *pred, int bank, unsigned int pc, unsigned int *tag, unsigned int *index)
+// Note bank - 1 should be passed in for bank_index.
+void hash(struct bpred_t *pred, int bank_index, unsigned int pc, unsigned int *tag, unsigned int *index)
 {	
 	int i;
+	// decrement index
 	int tag_bits = pred->dirpred.tage->config.tage.tag_bits;
+	int index_bits = pred->dirpred.tage->config.tage.T_idx_bits;
+	
+	
 	// CSR bits (actually xor tree implementation)
 	unsigned int csr1 = 0;
-	for (i = 0; i < ceil(pred->dirpred.tage->config.tage.history_length[bank] / tag_bits); i++)
+	int folds = pred->dirpred.tage->config.tage.history_length[bank_index]/tag_bits;
+	int mask_bits = pred->dirpred.tage->config.tage.history_length[bank_index]%tag_bits;
+	for (i = 0; i < folds; i++)
 	{
 		csr1 ^= ghist_bits(i*tag_bits, (i+1)*tag_bits - 1, pred->dirpred.tage->config.tage.ghist);
 	}
+	if (mask_bits != 0)
+		csr1 ^= ghist_bits(folds*tag_bits, folds*tag_bits+mask_bits - 1, pred->dirpred.tage->config.tage.ghist);
+	
+	
 	// Second alternate size CSR to avoid issues with repeated history pattern
 	unsigned int csr2 = 0;
-		for (i = 0; i < ceil(pred->dirpred.tage->config.tage.history_length[bank] / (tag_bits - 1)); i++)
+	folds = pred->dirpred.tage->config.tage.history_length[bank_index]/(tag_bits - 1);
+	mask_bits = pred->dirpred.tage->config.tage.history_length[bank_index]%(tag_bits - 1);
+	for (i = 0; i < folds; i++)
 	{
 		csr2 ^= ghist_bits(i*(tag_bits - 1), (i+1)*(tag_bits - 1) - 1, pred->dirpred.tage->config.tage.ghist);
 	}
+	if (mask_bits != 0)
+		csr2 ^= ghist_bits(folds*(tag_bits - 1), folds*(tag_bits - 1) + mask_bits - 1, pred->dirpred.tage->config.tage.ghist);
+	
+	
+	// Final fold with index bit width
+	unsigned int csr = 0;
+	folds = pred->dirpred.tage->config.tage.history_length[bank_index] / index_bits;
+	mask_bits = pred->dirpred.tage->config.tage.history_length[bank_index] % index_bits;
+	for (i = 0; i < folds; i++)
+	{
+		csr ^= ghist_bits(i*index_bits, (i+1)*index_bits - 1, pred->dirpred.tage->config.tage.ghist);
+	}
+	if (mask_bits != 0)
+		csr ^= ghist_bits(folds*index_bits, folds*index_bits + mask_bits - 1, pred->dirpred.tage->config.tage.ghist);
+	
 	// Calculate tag and index
-	*tag = (pc ^ csr1 ^ (csr2 << 1)) & ((1 << tag_bits) - 1);
+	//*tag = (pc ^ csr1 ^ (csr2 << 1)) & ((1 << tag_bits) - 1);
+	*tag = ((pc >> MD_BR_SHIFT) ^ csr1 ^ (csr2 << 1)) & ((1 << tag_bits) - 1);
 	// O-GEHL paper index hash function:
 	// 2^n entries:
 	// pc[3n:0] ^ phist ^ ghist (folded I would assume)
 	//*index = pc[9:0] ^ pc[19:10] ^ CSR
-	// Just a scratch hash function for index (change to hash function from paper author's code)
-	*index = (pc ^ (pc >> pred->dirpred.tage->config.tage.T_idx_bits) ^ csr1 ^ (csr2 << 1)) & ((1 << pred->dirpred.tage->config.tage.T_idx_bits) - 1);
+	//*index = ((pc >> MD_BR_SHIFT) ^ (pc >> (index_bits + MD_BR_SHIFT)) ^ csr ^ pred->dirpred.tage->config.tage.phist) & ((1 << index_bits) - 1);
+	*index = ((pc >> MD_BR_SHIFT) ^ (pc >> (16 + MD_BR_SHIFT)) ^ csr ^ pred->dirpred.tage->config.tage.phist) & ((1 << index_bits) - 1); // dir rate 9428 (vs 0.9346 for bimod 0.9434 2-lev)
 }
 
 void update_tags_and_indicies(struct bpred_t *pred, unsigned int pc)
 {
 	for (int bank = 1; bank < pred->dirpred.tage->config.tage.M; bank++)	
-		hash(pred, bank, pc, &pred->dirpred.tage->config.tage.tag[bank-1], &pred->dirpred.tage->config.tage.index[bank-1]);
+		hash(pred, bank-1, pc, &pred->dirpred.tage->config.tage.tag[bank-1], &pred->dirpred.tage->config.tage.index[bank-1]);
 }
-		
-	
