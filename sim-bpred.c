@@ -278,10 +278,7 @@ sim_check_options(struct opt_odb_t *odb, int argc, char **argv)
     }
   else if (!mystricmp(pred_type, "tage"))
   {
-    /* TODO: Revise this with more parameters as we implement TAGE. Right now,
-     * only btb sets, btb associativity, and ret stack size are used in
-     * the tage case of bpred_create()
-     */
+    /* Tage predictor, create a new branch predictor with the tage configuration */
     pred = bpred_create(BPredTAGE,
 			  /* bimod table size */0,
 			  /* 2lev l1 size */0,
@@ -293,7 +290,6 @@ sim_check_options(struct opt_odb_t *odb, int argc, char **argv)
 			  /* btb sets */btb_config[0],
 			  /* btb assoc */btb_config[1],
 			  /* ret-addr stack size */ras_size);
-    printf("Setting up tage...");
   }
   else
     fatal("cannot parse predictor type `%s'", pred_type);
