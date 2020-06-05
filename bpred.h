@@ -324,8 +324,12 @@ void hash(struct bpred_t *pred, int bank, unsigned int pc, unsigned int *tag, un
 
 // Update global history (shift left and add new bit)
 void update_ghist(_Bool new_bit, uint32_t *ghist);
+
 // Get a bit range from ghist (must be less than 32 bits, range is start_bit to stop_bit inclusive)
 uint32_t ghist_bits(int start_bit, int stop_bit, uint32_t ghist[]);
+
+// update predictor pointers and indecies/tags based on branch address and global history
+void tage_set_pred_ptrs(struct bpred_t *pred, struct bpred_update_t *dir_update_ptr, unsigned int baddr);
 
 
 #ifdef foo0

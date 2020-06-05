@@ -278,10 +278,6 @@ sim_check_options(struct opt_odb_t *odb, int argc, char **argv)
     }
   else if (!mystricmp(pred_type, "tage"))
   {
-    /* TODO: Revise this with more parameters as we implement TAGE. Right now,
-     * only btb sets, btb associativity, and ret stack size are used in
-     * the tage case of bpred_create()
-     */
     pred = bpred_create(BPredTAGE,
 			  /* bimod table size */0,
 			  /* 2lev l1 size */0,

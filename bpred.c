@@ -617,13 +617,6 @@ bpred_dir_lookup(struct bpred_dir_t *pred_dir,	/* branch dir predictor inst */
     case BPredTaken:
     case BPredNotTaken:
       break;
-#if 0
-/* TODO: Fill out the below case with the tage behavior? Although this case may
- * end up being empty the BPredTaken and BPredNotTaken cases above.
- */
-    case BPredTAGE:
-      break;
-#endif
     default:
       panic("bogus branch direction predictor class");
     }
@@ -721,39 +714,7 @@ bpred_lookup(struct bpred_t *pred,	/* branch predictor instance */
 		// Only predict for conditional branches
 		if ((MD_OP_FLAGS(op) & (F_CTRL|F_UNCOND)) != (F_CTRL|F_UNCOND))
 		{
-			// use same hash function as simplescalar bimod predictor for ease of comparison
-			unsigned int base_index = ((baddr >> 19) ^ (baddr >> MD_BR_SHIFT)) & ((1 << pred->dirpred.tage->config.tage.base_idx_bits)-1);
-			dir_update_ptr->tage_base = &pred->dirpred.tage->config.tage.base_table[base_index];
-
-			//[###TAGE###] predict branch
-			//get primary and alt predictions
-			tage_entry_t* pred_ptr = NULL;
-			tage_entry_t* altpred_ptr = NULL;
-			unsigned int index, tag;
-			_Bool match_found = 0;
-			update_tags_and_indicies(pred, baddr); // Right place for update?
-			for (int bank = 1; bank < pred->dirpred.tage->config.tage.M; bank++)
-			{
-				index = pred->dirpred.tage->config.tage.index[bank-1];
-				tag = pred->dirpred.tage->config.tage.tag[bank - 1];
-				if (pred->dirpred.tage->config.tage.T[bank-1][index].tag == tag) // bank - 1 due to bank 0 being base predictor
-				{
-					// Longest history is primary if there is more than one match
-					if (match_found)
-					{
-						altpred_ptr = pred_ptr;
-					}
-					else
-					{
-						match_found = 1;
-					}
-					dir_update_ptr->tage_index = index;
-					dir_update_ptr->tage_bank = bank;
-					pred_ptr = &pred->dirpred.tage->config.tage.T[bank-1][index];
-				}
-			}
-			dir_update_ptr->tage_pred = pred_ptr;
-			dir_update_ptr->tage_altpred = altpred_ptr;
+			tage_set_pred_ptrs(pred, dir_update_ptr, baddr);
 		}
 	break;
 	
@@ -1073,14 +1034,12 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
    * matched-on entry or a victim which was LRU in its set)
    */
 
-  /* TAGE update. Only update for conditional branches */
+  /* TAGE update */
   if (pred->class == BPredTAGE)
   {
 	  // TAGE update
-	  // update dags and indexes at the top???
 	  // Only update if it's a conditional branch
-	  //if ((MD_OP_FLAGS(op) & (F_CTRL|F_UNCOND)) != (F_CTRL|F_UNCOND))
-	  if ((MD_OP_FLAGS(op) & (F_CTRL|F_COND)) == (F_CTRL|F_COND))
+	  if ((MD_OP_FLAGS(op) & (F_CTRL|F_UNCOND)) != (F_CTRL|F_UNCOND))
 	  {
 		  _Bool base_pred, alt_pred, provider;
 		  if (!dir_update_ptr->tage_base) // Hacky uglyness [for some reason update is called first]
@@ -1150,8 +1109,7 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
 		  int Tk = 0, Tj = 0; // Free banks
 		  if ((taken != pred_taken) && (p_bank != (M-1)))
 		  {
-			  // update tags and indicies
-			  update_tags_and_indicies(pred, baddr);
+			  //update_tags_and_indicies(pred, baddr);
 			  _Bool match = 0;
 			  for (int bank = p_bank; bank < M; bank++)
 			  {
@@ -1212,7 +1170,7 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
 			  }
 		  }		
 				  
-		  /*if (branch_count == 256000)
+		  if (branch_count == 256000)
 		  {
 			  for (int bank = 1; bank < pred->dirpred.tage->config.tage.M; bank++)
 				for (int row = 0; row < ((1 << pred->dirpred.tage->config.tage.T_idx_bits) - 1); row++)
@@ -1220,19 +1178,26 @@ bpred_update(struct bpred_t *pred,	/* branch predictor instance */
 			  branch_count = 0;
 		  }
 		  else
-			  ++branch_count;*/
-		  // if predcount == 256,000
-		  // 	if low reset all low bits else reset all high bits (for privider bank or all?)
-		  // if prediction was wrong and not highest bank:
-		  // 	if not highest bank
-		  // 	if no u are 0, decrement all u
-		  //	else if two have uk == 0
-		  //		choose lower with higher probability
+			  ++branch_count;
+
 		  // update phist (least significant bit. Unclear which bit paper used.)
 			pred->dirpred.tage->config.tage.phist <<= 1;
 			pred->dirpred.tage->config.tage.phist |= (baddr>>MD_BR_SHIFT) & 1; // right shift by 3 (lowest 3 bits always appear to be 0)
 		    update_ghist(taken, pred->dirpred.tage->config.tage.ghist);
 	  }
+	  else // On unconditional branches, put 1 in ghist
+		update_ghist(1, pred->dirpred.tage->config.tage.ghist);
+	
+	  // Reset logic (both jumps and conditional branches increment counter)
+	  if (branch_count == 256000)
+	  {
+		  for (int bank = 1; bank < pred->dirpred.tage->config.tage.M; bank++)
+			for (int row = 0; row < ((1 << pred->dirpred.tage->config.tage.T_idx_bits) - 1); row++)
+				pred->dirpred.tage->config.tage.T[bank-1][row].u >>= 1;
+		  branch_count = 0;
+	  }
+	  else
+		  ++branch_count;
   }
   else
   {
@@ -1394,13 +1359,49 @@ void hash(struct bpred_t *pred, int bank_index, unsigned int pc, unsigned int *t
 	// O-GEHL paper index hash function:
 	// 2^n entries:
 	// pc[3n:0] ^ phist ^ ghist (folded I would assume)
-	//*index = pc[9:0] ^ pc[19:10] ^ CSR
-	//*index = ((pc >> MD_BR_SHIFT) ^ (pc >> (index_bits + MD_BR_SHIFT)) ^ csr ^ pred->dirpred.tage->config.tage.phist) & ((1 << index_bits) - 1);
-	*index = ((pc >> MD_BR_SHIFT) ^ (pc >> (16 + MD_BR_SHIFT)) ^ csr ^ pred->dirpred.tage->config.tage.phist) & ((1 << index_bits) - 1); // dir rate 9428 (vs 0.9346 for bimod 0.9434 2-lev)
+	*index = ((pc >> MD_BR_SHIFT) ^ (pc >> (16 + MD_BR_SHIFT)) ^ csr ^ pred->dirpred.tage->config.tage.phist) & ((1 << index_bits) - 1);
 }
 
 void update_tags_and_indicies(struct bpred_t *pred, unsigned int pc)
 {
 	for (int bank = 1; bank < pred->dirpred.tage->config.tage.M; bank++)	
 		hash(pred, bank-1, pc, &pred->dirpred.tage->config.tage.tag[bank-1], &pred->dirpred.tage->config.tage.index[bank-1]);
+}
+
+// Update tags and indicies, update branch prediction pointers
+void tage_set_pred_ptrs(struct bpred_t *pred, struct bpred_update_t *dir_update_ptr, unsigned int baddr)
+{
+	// use same hash function as simplescalar bimod predictor for ease of comparison
+	unsigned int base_index = ((baddr >> 19) ^ (baddr >> MD_BR_SHIFT)) & ((1 << pred->dirpred.tage->config.tage.base_idx_bits)-1);
+	dir_update_ptr->tage_base = &pred->dirpred.tage->config.tage.base_table[base_index];
+
+	//[###TAGE###] predict branch
+	//get primary and alt predictions
+	tage_entry_t* pred_ptr = NULL;
+	tage_entry_t* altpred_ptr = NULL;
+	unsigned int index, tag;
+	_Bool match_found = 0;
+	update_tags_and_indicies(pred, baddr); // Right place for update?
+	for (int bank = 1; bank < pred->dirpred.tage->config.tage.M; bank++)
+	{
+		index = pred->dirpred.tage->config.tage.index[bank-1];
+		tag = pred->dirpred.tage->config.tage.tag[bank - 1];
+		if (pred->dirpred.tage->config.tage.T[bank-1][index].tag == tag) // bank - 1 due to bank 0 being base predictor
+		{
+			// Longest history is primary if there is more than one match
+			if (match_found)
+			{
+				altpred_ptr = pred_ptr;
+			}
+			else
+			{
+				match_found = 1;
+			}
+			dir_update_ptr->tage_index = index;
+			dir_update_ptr->tage_bank = bank;
+			pred_ptr = &pred->dirpred.tage->config.tage.T[bank-1][index];
+		}
+	}
+	dir_update_ptr->tage_pred = pred_ptr;
+	dir_update_ptr->tage_altpred = altpred_ptr;
 }
